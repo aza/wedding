@@ -91,17 +91,18 @@ function StartKarl(){
     var rsvp = {
         name: $('#yourname').val(),
         email: $('#youremail').val(),
-        people: $('#numpeople').val()
+        people: $('#numpeople').val(),
+        thought: $('#thought').val()
     }
 
     var rsvpRef = new Firebase("https://toelsewhere.firebaseio.com/rsvp")
     rsvpRef.push(rsvp)
 
     $('.entry').fadeOut(1000)
-    $('<h1>').text("SEE YOU SOON").hide().appendTo('.two .content').delay(1500).fadeIn(1000).delay(1500).fadeOut(2000, function(){
+    $('<h1>').text("SEE YOU SOON. MEWRP.").hide().appendTo('.two .content').delay(1500).fadeIn(1000).delay(1500).fadeOut(2000, function(){
         $('html, body').stop(true).animate({
             scrollTop: 0
-        }, 1000).dequeue()
+        }, 8000).dequeue()
     })
 
     console.log("RSVPing")
