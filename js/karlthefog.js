@@ -92,7 +92,8 @@ function StartKarl(){
         name: $('#yourname').val(),
         email: $('#youremail').val(),
         people: $('#numpeople').val(),
-        thought: $('#thought').val()
+        thought: $('#thought').val(),
+        time: Date.now()
     }
 
     if( !rsvp.name || !rsvp.email || !rsvp.thought ){
