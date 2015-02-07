@@ -95,6 +95,10 @@ function StartKarl(){
         thought: $('#thought').val()
     }
 
+    if( !rsvp.name || !rsvp.email || !rsvp.thought ){
+      return
+    }
+
     var rsvpRef = new Firebase("https://toelsewhere.firebaseio.com/rsvp")
     rsvpRef.push(rsvp)
 
