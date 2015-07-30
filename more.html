@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="">
+    <meta name="author" content="">
+    
+    <link rel="icon" href="/gfx/favicon.ico" type="image/x-icon">
+
+    <title>Urban Pioneer</title>
+
+    <!-- Bootstrap Core CSS -->
+    <link rel="stylesheet" href="css/bootstrap.min.css" type="text/css">
+
+    <!-- Custom Fonts -->
+    <link href='http://fonts.googleapis.com/css?family=Open+Sans:300italic,400italic,600italic,700italic,800italic,400,300,600,700,800' rel='stylesheet' type='text/css'>
+    <link href='http://fonts.googleapis.com/css?family=Merriweather:400,300,300italic,400italic,700,700italic,900,900italic' rel='stylesheet' type='text/css'>
+    <link rel="stylesheet" href="font-awesome/css/font-awesome.min.css" type="text/css">
+
+    <!-- Plugin CSS -->
+    <link rel="stylesheet" href="css/animate.min.css" type="text/css">
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="css/creative.css" type="text/css">
+    <link rel="stylesheet" type="text/css" href="css/style.css">
+
+    <!-- HTML5 Shim and Respond.js IE8 support of HTML5 elements and media queries -->
+    <!-- WARNING: Respond.js doesn't work if you view the page via file:// -->
+    <!--[if lt IE 9]>
+        <script src="https://oss.maxcdn.com/libs/html5shiv/3.7.0/html5shiv.js"></script>
+        <script src="https://oss.maxcdn.com/libs/respond.js/1.4.2/respond.min.js"></script>
+    <![endif]-->
+
+    
+    <script src="js/effect.js"></script>
+
+    <script id="vshader" type="x-shader/x-vertex">
+        uniform mat4 u_modelViewProjMatrix;
+        uniform mat4 u_normalMatrix;
+        uniform vec3 lightDir;
+
+        attribute vec3 vNormal;
+        attribute vec4 vColor;
+        attribute vec4 vPosition;
+
+        varying float v_Dot;
+        varying vec4 v_Color;
+
+        void main()
+        {
+            gl_Position = u_modelViewProjMatrix * vPosition;
+            v_Color = vColor;
+            vec4 transNormal = u_normalMatrix * vec4(vNormal, 1);
+            v_Dot = max(dot(transNormal.xyz, lightDir), 0.0);
+        }
+    </script>
+
+    <script id="fshader" type="x-shader/x-fragment">
+    #define USE_LOD
+
+    float noise( in vec3 x )
+    {
+        vec3 p = floor(x);
+        vec3 f = fract(x);
+        f = f*f*(3.0-2.0*f);
+        vec2 uv = (p.xy+vec2(37.0,17.0)*p.z) + f.xy;
+        vec2 rg = texture2D( iChannel0, (uv+ 0.5)/256.0, -100.0 ).yx;
+        return -1.0+2.0*mix( rg.x, rg.y, f.z );
+    }
+
+    float map5( in vec3 p )
+    {
+        vec3 q = p - vec3(1.0,0.1,0.0)*iGlobalTime;
+        float f;
+        f  = 0.50000*noise( q ); q = q*2.02;
+        f += 0.25000*noise( q ); q = q*2.03;
+        f += 0.12500*noise( q ); q = q*2.01;
+        f += 0.06250*noise( q ); q = q*2.02;
+        f += 0.03125*noise( q );
+        return clamp( 1.5 - p.y + 1.75*f, 0.0, 1.0 );
+    }
+    #ifdef USE_LOD
+    float map4( in vec3 p )
+    {
+        vec3 q = p - vec3(1.0,0.1,0.0)*iGlobalTime;
+        float f;
+        f  = 0.50000*noise( q ); q = q*2.02;
+        f += 0.25000*noise( q ); q = q*2.03;
+        f += 0.12500*noise( q ); q = q*2.01;
+        f += 0.06250*noise( q );
+        return clamp( 1.5 - p.y + 1.75*f, 0.0, 1.0 );
+    }
+    float map3( in vec3 p )
+    {
+        vec3 q = p - vec3(1.0,0.1,0.0)*iGlobalTime;
+        float f;
+        f  = 0.50000*noise( q ); q = q*2.02;
+        f += 0.25000*noise( q ); q = q*2.03;
+        f += 0.12500*noise( q );
+        return clamp( 1.5 - p.y + 1.75*f, 0.0, 1.0 );
+    }
+    float map2( in vec3 p )
+    {
+        vec3 q = p - vec3(1.0,0.1,0.0)*iGlobalTime;
+        float f;
+        f  = 0.50000*noise( q ); q = q*2.02;
+        f += 0.25000*noise( q );;
+        return clamp( 1.5 - p.y + 1.75*f, 0.0, 1.0 );
+    }
+    #endif
+
+    vec3 sundir = normalize( vec3(-1.0,0.0,-0.1) );
+
+    vec4 integrate( in vec4 sum, in float dif, in float den, in vec3 bgcol, in float t )
+    {
+        // lighting
+        vec3 lin = vec3(0.65,0.68,0.7)*1.3 + 0.5*vec3(0.7, 0.5, 0.3)*dif;        
+        vec4 col = vec4( mix( 1.15*vec3(1.0,0.95,0.8), vec3(0.65), den ), den );
+        col.xyz *= lin;
+        col.xyz = mix( col.xyz, bgcol*0.9, 1.0-exp(-0.002*t*t) );
+        // front to back blending    
+        col.a *= 0.4;
+        col.rgb *= col.a;
+        return sum + col*(1.0-sum.a);
+    }
+
+    vec4 raymarch( in vec3 ro, in vec3 rd, in vec3 bgcol )
+    {
+        vec4 sum = vec4(0, 0, 0, 0);
+
+        float t = 0.0;
+
+    #ifndef USE_LOD
+        for(int i=0; i<120; i++)
+        {
+            vec3  pos = ro + t*rd;
+            if( pos.y<-1.0 || pos.y>4.0 || sum.a > 0.99 ) break;
+            float den = map5( pos );
+            if( den>0.01 )
+            {
+                float dif =  clamp((den - map5(pos+0.3*sundir))/0.6, 0.0, 1.0 );
+                sum = integrate( sum, dif, den, bgcol, t );
+            }
+            t += max(0.1,0.02*t);
+        }
+    #else
+        for(int i=0; i<30; i++)
+        {
+            vec3  pos = ro + t*rd;
+            if( pos.y<-1.0 || pos.y>4.0 || sum.a > 0.99 ) break;
+            float den = map5( pos );
+            if( den>0.01 )
+            {
+                float dif =  clamp((den - map5(pos+0.3*sundir))/0.6, 0.0, 1.0 );
+                sum = integrate( sum, dif, den, bgcol, t );
+            }
+            t += max(0.1,0.02*t);
+        }
+        for(int i=0; i<30; i++)
+        {
+            vec3  pos = ro + t*rd;
+            if( pos.y<-1.0 || pos.y>4.0 || sum.a > 0.99 ) break;
+            float den = map4( pos );
+            if( den>0.01 )
+            {
+                float dif =  clamp((den - map4(pos+0.3*sundir))/0.6, 0.0, 1.0 );
+                sum = integrate( sum, dif, den, bgcol, t );
+            }
+            t += max(0.1,0.02*t);
+        }
+        for(int i=0; i<30; i++)
+        {
+            vec3  pos = ro + t*rd;
+            if( pos.y<-1.0 || pos.y>4.0 || sum.a > 0.99 ) break;
+            float den = map3( pos );
+            if( den>0.01 )
+            {
+                float dif =  clamp((den - map3(pos+0.3*sundir))/0.6, 0.0, 1.0 );
+                sum = integrate( sum, dif, den, bgcol, t );
+            }
+            t += max(0.1,0.02*t);
+        }
+        for(int i=0; i<30; i++)
+        {
+            vec3  pos = ro + t*rd;
+            if( pos.y<-1.0 || pos.y>4.0 || sum.a > 0.99 ) break;
+            float den = map2( pos );
+            if( den>0.01 )
+            {
+                float dif =  clamp((den - map2(pos+0.3*sundir))/0.6, 0.0, 1.0 );
+                sum = integrate( sum, dif, den, bgcol, t );
+            }
+            t += max(0.1,0.02*t);
+        }
+    #endif
+        return clamp( sum, 0.0, 1.0 );
+    }
+
+    void main(void)
+    {
+        vec2 p = (-iResolution.xy + 2.0*gl_FragCoord.xy)/ iResolution.y;
+
+        vec2 mo = -1.0 + 2.0*iMouse.xy / iResolution.xy;
+        
+        // camera
+        vec3 ro = 4.0*normalize(vec3(cos(2.75-3.0*mo.x), 0.7+(mo.y+1.0), sin(2.75-3.0*mo.x)));
+        vec3 ta = vec3(0.0, 1.0, 0.0);
+        vec3 ww = normalize( ta - ro);
+        vec3 uu = normalize(cross( vec3(0.0,1.0,0.0), ww ));
+        vec3 vv = normalize(cross(ww,uu));
+        vec3 rd = normalize( p.x*uu + p.y*vv + 1.5*ww );
+
+        // background sky     
+        float sun = clamp( dot(sundir,rd), 0.0, 1.0 );
+        vec3 col = vec3(0.078*2.0,0.078*2.0,0.122*2.0) - rd.y*0.2*vec3(1.0,0.5,1.0) + 0.15*0.5;
+        col += 0.2*vec3(1.0,.6,0.1)*pow( sun, 8.0 );
+
+        // clouds    
+        vec4 res = raymarch( ro, rd, col );
+        col = col*(1.0-res.w) + res.xyz;
+        
+        // sun glare    
+        col += 0.1*vec3(1.0,0.4,0.2)*pow( sun, 3.0 );
+
+        gl_FragColor = vec4( col, 1.0 );
+    }
+
+    </script>
+    <script src="js/karlthefog.js"></script>
+
+</head>
+
+<body id="page-top" onload="StartKarl()">
+
+<canvas id="canvas" width="384" height="288"> <!--512 384--> If you're seeing this your web browser doesn't support the &lt;canvas>&gt; element. </canvas>    
+
+    <nav id="mainNav" class="navbar navbar-default navbar-fixed-top">
+        <div class="container-fluid">
+            <!-- Brand and toggle get grouped for better mobile display -->
+            <div class="navbar-header">
+                <button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target="#bs-example-navbar-collapse-1">
+                    <span class="sr-only">Toggle navigation</span>
+                    <span class="icon-bar"></span>
+                    <span class="icon-bar"></span>
+                    <span class="icon-bar"></span>
+                </button>
+                <a class="navbar-brand page-scroll" href="#page-top">Aza+Wendellen</a>
+            </div>
+
+            <!-- Collect the nav links, forms, and other content for toggling -->
+            <div class="collapse navbar-collapse" id="bs-example-navbar-collapse-1">
+                <ul class="nav navbar-nav navbar-right">
+                    <li>
+                        <a class="page-scroll" href="#location">Location</a>
+                    </li>
+                    <li>
+                        <a class="page-scroll" href="#timing">Timing</a>
+                    </li>
+                    <li>
+                        <a class="page-scroll" href="#dress">Dress</a>
+                    </li>
+                    <li>
+                        <a class="page-scroll" href="#registry">Registry</a>
+                    </li>
+                </ul>
+            </div>
+            <!-- /.navbar-collapse -->
+        </div>
+        <!-- /.container-fluid -->
+    </nav>
+
+    <header>
+        <div class="header-content">
+            <div class="header-content-inner">
+                <h1 class="wow fadeInDown" data-wow-delay="1.3s">15 August 2015</h1>
+                <br/>
+                <p class="wow fadeInUp" data-wow-delay="2.4s">The day we become a tessearct.</p>
+            </div>
+        </div>
+    </header>
+
+    <section class="no-padding" id="portfolio">
+        <div class="container-fluid">
+            <div class="row no-gutter">
+                <div class="col-lg-4 col-sm-6">
+                    <a class="portfolio-box">
+                        <img src="https://igcdn-photos-e-a.akamaihd.net/hphotos-ak-xap1/t51.2885-15/10731885_1522018121375468_927502162_n.jpg" class="img-responsive" alt="">
+                        <div class="portfolio-box-caption"></div>
+                    </a>
+                </div>
+                <div class="col-lg-4 col-sm-6">
+                    <a class="portfolio-box">
+                        <img src="https://scontent.cdninstagram.com/hphotos-xpf1/t51.2885-15/10950532_861860517207215_955119086_n.jpg" class="img-responsive" alt="">
+                        <div class="portfolio-box-caption"></div>
+                    </a>
+                </div>
+                <div class="col-lg-4 col-sm-6">
+                    <a class="portfolio-box">
+                        <img src="https://igcdn-photos-b-a.akamaihd.net/hphotos-ak-xfp1/t51.2885-15/10895395_827434227294457_1793316455_n.jpg" class="img-responsive" alt="">
+                        <div class="portfolio-box-caption"></div>
+                    </a>
+                </div>
+                
+
+            </div>
+        </div>
+    </section>      
+
+    <section class="bg-clear" id="location">
+        <div class="container-fluid">
+            <div class="row section-name">
+                <div class="col-lg-8 col-lg-offset-2 text-center glitch">
+                    <h2 class="section-heading">Location</h2>
+                    <br/>
+                    <br/>
+                    
+                    <i class="fa fa-4x fa-location-arrow wow bounceIn" data-wow-delay=".3s"></i>
+                </div>
+            </div>
+
+            <div class="row">
+
+                <div class="col-lg-2 col-sm-3"></div>
+
+                <div class="col-lg-4 col-sm-6">
+                    <iframe class="container-fluid map" width="100%" height="500px" frameborder="0" style="border:0" src="https://www.google.com/maps/embed/v1/place?q=16th%20Street%20Station%2C%20Oakland%2C%20CA%2C%20United%20States&key=AIzaSyDfYiWr92PFZ91A0E7niWK4ghM1IPI8Zwk" allowfullscreen></iframe>
+                </div>
+
+                <div class="col-lg-4 col-sm-6 glitch">
+                    <p>Our second date began with the cryptic message, &ldquo;wear warm clothes and dark colors&rdquo; ended in a surreal underground experience at the 16th Street Train Station. Built in 1912, we feel privledged to be able to celebrate in this magical place.</p>
+                    <p>While there will be limited parking, we recommend taking <a href="https://www.uber.com/">Uber</a> or <a href="https://www.lyft.com/">Lyft</a>.</p>   
+                </div>
+
+                <div class="col-lg-2 col-sm-3"></div>
+            </div>
+        </div>
+    </section>
+
+
+    <section class="bg-clear" id="timing">
+        <div class="container-fluid">
+            <div class="row section-name">
+                <div class="col-lg-8 col-lg-offset-2 text-center glitch">
+                    <h2 class="section-heading">Timing</h2>
+                    <br/><br/>
+                    <i class="fa fa-4x fa-clock-o wow bounceIn" data-wow-delay=".3s"></i>
+                </div>
+            </div>
+
+            <div class="row">
+
+                <div class="col-lg-2 col-sm-3"></div>
+
+                <div class="col-lg-8 col-sm-6 text-center glitch">
+                    <p>Appear at 5:30. Dissapear at 11pm.</p>
+                </div>
+
+                <div class="col-lg-2 col-sm-3"></div>
+            </div>
+        </div>
+    </section>
+
+    <section class="bg-clear" id="dress">
+        <div class="container-fluid">
+            <div class="row section-name">
+                <div class="col-lg-8 col-lg-offset-2 text-center glitch">
+                    <h2 class="section-heading">Dress</h2>
+                    <br/><br/>
+                    <i class="fa fa-4x fa-user-secret wow bounceIn" data-wow-delay=".3s"></i>
+                </div>
+            </div>
+
+            <div class="row">
+
+                <div class="col-lg-2 col-sm-3"></div>
+
+                <div class="col-lg-8 col-sm-6 text-center glitch">
+                    <p>Look sharp. Black-tie or radical self expression.</p>
+                </div>
+
+                <div class="col-lg-2 col-sm-3"></div>
+            </div>
+        </div>
+    </section>
+
+    <section class="bg-clear" id="registry">
+        <div class="container-fluid">
+            <div class="row section-name">
+                <div class="col-lg-8 col-lg-offset-2 text-center glitch">
+                    <h2 class="section-heading">Registry</h2>
+                    <br/><br/>
+                    <i class="fa fa-4x fa-magic wow bounceIn" data-wow-delay=".3s"></i>
+                </div>
+            </div>
+
+            <div class="row">
+
+                <div class="col-lg-2 col-sm-3"></div>
+
+                <div class="col-lg-8 col-sm-6 text-center glitch">
+                    <p>If you feel so inclined, <a href="https://www.blueprintregistry.com/registry/toelsewhere">help us</a> out.</p>
+                </div>
+
+                <div class="col-lg-2 col-sm-3"></div>
+            </div>
+        </div>
+    </section> 
+
+    <section class="no-padding" id="portfolio">
+        <div class="container-fluid">
+            <div class="row no-gutter">
+                <div class="col-lg-4 col-sm-6">
+                    <a class="portfolio-box">
+                        <img src="https://igcdn-photos-h-a.akamaihd.net/hphotos-ak-xft1/t51.2885-15/11111507_1629685207265719_2122080224_n.jpg" class="img-responsive" alt="">
+                        <div class="portfolio-box-caption"></div>
+                    </a>
+                </div>
+                <div class="col-lg-4 col-sm-6">
+                    <a class="portfolio-box">
+                        <img src="https://igcdn-photos-e-a.akamaihd.net/hphotos-ak-xfa1/t51.2885-15/11282030_956308157752788_1865438922_n.jpg" class="img-responsive" alt="">
+                        <div class="portfolio-box-caption"></div>
+                    </a>
+                </div>
+               <div class="col-lg-4 col-sm-6">
+                    <a class="portfolio-box">
+                         <img src="https://scontent.cdninstagram.com/hphotos-xpf1/t51.2885-15/928963_1636611119917623_273563021_n.jpg" class="img-responsive" alt="">
+                        <div class="portfolio-box-caption"></div>
+                    </a>
+                </div>
+                
+
+            </div>
+        </div>
+    </section>     
+
+
+    <!-- jQuery -->
+    <script src="js/jquery.js"></script>
+
+    <!-- Bootstrap Core JavaScript -->
+    <script src="js/bootstrap.min.js"></script>
+
+    <!-- Plugin JavaScript -->
+    <script src="js/jquery.easing.min.js"></script>
+    <script src="js/jquery.fittext.js"></script>
+    <script src="js/wow.min.js"></script>
+
+    <!-- Custom Theme JavaScript -->
+    <script src="js/creative.js"></script>
+
+</body>
+
+</html>
